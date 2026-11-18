@@ -18,3 +18,81 @@ brightnessSetting.oninput=e=>brightnessValue.textContent=`${e.target.value}%`;sa
 function updateLiveClock(){const target=document.querySelector('.topbar .eyebrow');if(!target)return;const now=new Date(),week=['星期日','星期一','星期二','星期三','星期四','星期五','星期六'][now.getDay()],pad=n=>String(n).padStart(2,'0');target.textContent=`${now.getFullYear()} 年 ${now.getMonth()+1} 月 ${now.getDate()} 日，${week} · ${pad(now.getHours())}:${pad(now.getMinutes())}`;}updateLiveClock();setInterval(updateLiveClock,30000);
 
 
+
+/* Multiple daily doses for one medicine */
+function slotsOf(medicine) {
+  return medicine.schedules?.length ? medicine.schedules : [{ time: medicine.time || '20:00', dose: medicine.dose || 1, instruction: medicine.instruction || '按医嘱', status: medicine.status || 'pending' }];
+}
+state.boxes.forEach(b => b.medicines.forEach(m => { if (!m.schedules) m.schedules = slotsOf(m); }));
+function addScheduleRow(schedule = { time: '20:00', dose: 1, instruction: '按医嘱', status: 'pending' }) {
+  const row = document.createElement('div'); row.className = 'schedule-row';
+  row.innerHTML = '<input class="schedule-time" type="time" required/><input class="schedule-dose" type="number" min="1" max="99" required/><select class="schedule-instruction" aria-label="服用方式"><option value="饭前">饭前</option><option value="饭后">饭后</option><option value="随餐">随餐</option><option value="睡前">睡前</option><option value="空腹">空腹</option><option value="按医嘱">按医嘱</option><option value="其他">其他</option></select><button class="remove-schedule" type="button" aria-label="删除该时段">×</button>';
+  row.querySelector('.schedule-time').value = schedule.time;
+  row.querySelector('.schedule-dose').value = schedule.dose;
+  row.querySelector('.schedule-instruction').value = schedule.instruction || '按医嘱';
+  row.querySelector('.remove-schedule').onclick = () => { if (scheduleRows.children.length === 1) { toastMsg('每种药至少保留一个服药时段。'); return; } row.remove(); };
+  scheduleRows.appendChild(row);
+}
+function resetScheduleEditor(schedules = [{ time: '20:00', dose: 1, instruction: '按医嘱', status: 'pending' }]) {
+  scheduleRows.innerHTML = ''; schedules.forEach(addScheduleRow);
+}
+function initMultiDoseEditor() {
+  const oldRow = document.getElementById('medicineTime')?.closest('.form-row');
+  if (oldRow) oldRow.remove();
+  const editor = document.createElement('section'); editor.className = 'schedule-editor';
+  editor.innerHTML = '<div class="schedule-editor-head"><strong>每日服药安排</strong><small>同一种药可添加早、中、晚多个时段</small></div><div class="schedule-labels"><span>时间</span><span>每次剂量</span><span>服用方式</span></div><div id="scheduleRows"></div><button type="button" class="text-button add-schedule" id="addScheduleButton">＋ 添加一次服药</button>';
+  medicineThreshold.closest('label').before(editor);
+  addScheduleButton.onclick = () => addScheduleRow({ time: '20:00', dose: 1, instruction: '按医嘱', status: 'pending' });
+  resetScheduleEditor();
+}
+function renderProfile() {
+  const b = box();
+  const events = b.medicines.flatMap(m => slotsOf(m).map(s => ({ medicine: m, ...s }))).sort((a, c) => a.time.localeCompare(c.time));
+  const pending = events.find(e => e.status !== 'complete') || events[0];
+  const done = events.filter(e => e.status === 'complete').length;
+  personName.textContent = b.name; personInitial.textContent = b.name.charAt(0);
+  personInfo.textContent = `${b.gender} · ${b.age} 岁 · ${b.condition}`; deviceId.textContent = b.device;
+  nextDoseTime.textContent = pending ? `今天 ${pending.time}` : '今日已完成';
+  nextDoseInfo.textContent = pending ? `${pending.medicine.name} · 自动出药 ${pending.dose} 片 · ${pending.medicine.slot} 格` : '请按医嘱继续管理';
+  progressNumber.textContent = `${done}/${events.length}`;
+  progressTitle.textContent = `今天已完成 ${done} 次用药`;
+  progressText.textContent = pending ? `下一次为 ${pending.time}，药盒将自动弹出 ${pending.dose} 片${pending.medicine.name}。` : '今日药品均已确认。';
+}
+function renderSchedule() {
+  const events = box().medicines.flatMap(m => slotsOf(m).map(s => ({ medicine: m, ...s }))).sort((a, c) => a.time.localeCompare(c.time));
+  scheduleList.innerHTML = events.map((event, index) => `<div class="medicine-row ${event.status === 'complete' ? 'complete' : 'pending'}"><div class="time">${event.time}</div><div class="medicine-icon ${index % 3 === 0 ? 'blue' : index % 3 === 1 ? 'mint' : 'amber'}">${index % 3 === 0 ? '●' : index % 3 === 1 ? '◆' : '▲'}</div><div class="medicine-detail"><strong>${safe(event.medicine.name)}</strong><span>每次 ${event.dose} 片 · ${safe(event.instruction)} · ${safe(event.medicine.slot)} 格</span></div><div class="state">${event.status === 'complete' ? '<span class="check">✓</span><strong>已确认</strong><small>已同步</small>' : `<span class="waiting">◷</span><strong>待提醒</strong><small>将自动弹出 ${event.dose} 片</small>`}</div></div>`).join('') || '<p class="section-subline">这个药盒还没有药品，点击“添加药品”开始设置。</p>';
+}
+function renderInventory() {
+  const b = box(), l = lows(b);
+  inventoryList.innerHTML = b.medicines.map(m => {
+    const isLow = m.count <= m.threshold, percent = Math.min(100, Math.round(m.count / Math.max(m.threshold * 3, 1) * 100));
+    const plan = slotsOf(m).map(s => `${s.time} ${s.dose}片`).join('、');
+    return `<div class="inventory-row"><span class="slot">${safe(m.slot)}</span><div class="medicine-name"><strong>${safe(m.name)}</strong><small>每日 ${slotsOf(m).length} 次：${plan}</small></div><div class="inventory-meta"><strong>${m.count} 片可用 ${isLow ? '· 建议补货' : '· 库存充足'}</strong><div class="stock-track"><span class="stock-fill ${isLow ? 'low' : ''}" style="width:${percent}%"></span></div></div><div class="inventory-actions"><button class="edit-button" data-edit="${m.id}">编辑</button><a class="buy-link" href="https://i.meituan.com/" target="_blank" rel="noopener">买药↗</a></div></div>`;
+  }).join('') || '<p class="section-subline">暂无药品，请添加。</p>';
+  lowCount.textContent = `${l.length} 项`; lowTitle.textContent = l.length ? `${l[0].name}余量不足` : '当前库存充足';
+  lowText.textContent = l.length ? `「${b.name}」的药盒中，${l.map(m => m.name).join('、')}达到提醒线，建议提前补充。` : `「${b.name}」的药品余量均高于提醒线。`;
+  document.querySelectorAll('[data-edit]').forEach(button => button.onclick = () => editMedicine(Number(button.dataset.edit)));
+}
+function editMedicine(id) {
+  const medicine = box().medicines.find(item => item.id === id);
+  medicineModalTitle.textContent = '编辑药品'; medicineId.value = medicine.id; medicineName.value = medicine.name; medicineSlot.value = medicine.slot; medicineCount.value = medicine.count; medicineThreshold.value = medicine.threshold;
+  resetScheduleEditor(slotsOf(medicine)); scanStatus.textContent = '可重新扫描包装条码；药品时间和剂量支持多个时段。'; open('medicineModal');
+}
+openMedicineModal.onclick = () => {
+  medicineForm.reset(); medicineId.value = ''; medicineName.dataset.barcode = ''; medicineName.placeholder = '例如：维生素 D3';
+  resetScheduleEditor(); scanStatus.textContent = '扫码信息不会上传；剂量须按医生或药师确认。'; medicineModalTitle.textContent = '添加药品'; open('medicineModal');
+};
+medicineForm.onsubmit = event => {
+  event.preventDefault(); const b = box(), id = Number(medicineId.value), old = b.medicines.find(item => item.id === id);
+  const schedules = [...scheduleRows.children].map(row => ({ time: row.querySelector('.schedule-time').value, dose: Number(row.querySelector('.schedule-dose').value), instruction: row.querySelector('.schedule-instruction').value.trim() || '按医嘱', status: 'pending' })).sort((a, c) => a.time.localeCompare(c.time));
+  if (old?.schedules) schedules.forEach((s, index) => { if (old.schedules[index]?.time === s.time) s.status = old.schedules[index].status; });
+  const medicine = { id: id || Date.now(), name: medicineName.value.trim(), slot: medicineSlot.value.trim().toUpperCase(), count: Number(medicineCount.value), threshold: Number(medicineThreshold.value), schedules, time: schedules[0].time, dose: schedules[0].dose, barcode: medicineName.dataset.barcode || old?.barcode || '', instruction: schedules[0].instruction, status: old?.status || 'pending' };
+  b.medicines = id ? b.medicines.map(item => item.id === id ? medicine : item) : [...b.medicines, medicine];
+  save(); render(); close('medicineModal'); toastMsg(id ? '每日服药安排已更新。' : `已为 ${b.name} 添加专属药品。`); if (medicine.count <= medicine.threshold) setTimeout(showLowPopup, 250);
+};
+const multiDoseStyle = document.createElement('style'); multiDoseStyle.textContent = '.schedule-editor{margin:16px 0;padding:13px;border:1px solid #b8ddd6;border-radius:11px;background:#f6fcfa}.schedule-editor-head{display:flex;justify-content:space-between;align-items:baseline}.schedule-editor-head small{font-size:11px;color:#70848a}.schedule-labels,.schedule-row{display:grid;grid-template-columns:.72fr .9fr 1.25fr 28px;gap:7px;align-items:center}.schedule-labels{font-size:11px;color:#70848a;margin:12px 0 3px}.schedule-row{margin:7px 0}.schedule-row input{width:100%;padding:8px!important;margin:0!important}.remove-schedule{border:0;background:#fff1f0;color:#c24d4d;border-radius:7px;height:34px;font-size:18px;cursor:pointer}.add-schedule{margin-top:7px}@media(max-width:630px){.schedule-editor-head{display:block}.schedule-labels{display:none}.schedule-row{grid-template-columns:1fr 1fr 1fr 28px}.schedule-row input{font-size:12px}}'; document.head.appendChild(multiDoseStyle);
+initMultiDoseEditor(); render(); save();
+
+
+
+
